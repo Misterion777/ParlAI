@@ -110,6 +110,7 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = n_heads
         self.dim = dim
 
+        self.attn_weights = None        
         self.attn_dropout = nn.Dropout(p=dropout)  # --attention-dropout
         self.q_lin = nn.Linear(dim, dim)
         self.k_lin = nn.Linear(dim, dim)
@@ -253,6 +254,9 @@ class MultiHeadAttention(nn.Module):
             dot_prod, dim=-1, dtype=torch.float  # type: ignore
         ).type_as(query)
         attn_weights = self.attn_dropout(attn_weights)  # --attention-dropout
+        _, len1, _ = attn_weights.size()
+        if len1 != 1:
+            self.attn_weights = attn_weights
 
         attentioned = attn_weights.bmm(v)
         attentioned = (
