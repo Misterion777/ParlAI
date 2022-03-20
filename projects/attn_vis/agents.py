@@ -57,12 +57,11 @@ class OutputRecorder:
         self.outputs = []
 
 class AttentionOutTransformerAgentMixin():
-    def build_model(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-        model = super().build_model()
-
-        self.num_enc_layers = len(model.encoder.layers)
-        self.num_dec_layers = len(model.decoder.layers)
+        self.num_enc_layers = len(self.model.encoder.layers)
+        self.num_dec_layers = len(self.model.decoder.layers)
     
         # Register hooks to record outputs
         encoder_module_map = {
@@ -75,18 +74,16 @@ class AttentionOutTransformerAgentMixin():
         }
         self.hooks = {                        
             'encoder': self._register_series_of_hooks(
-                model=model.encoder, module_map=encoder_module_map
+                model=self.model.encoder, module_map=encoder_module_map
             ),
             'decoder': self._register_series_of_hooks(
-                model=model.decoder, module_map=decoder_module_map
+                model=self.model.decoder, module_map=decoder_module_map
             ),      
             'embeddings':OutputRecorder(self)
         }
-        model.embeddings.register_forward_hook(
+        self.model.embeddings.register_forward_hook(
             self.hooks['embeddings']
         )
-
-        return model
 
     def _register_series_of_hooks(
         self, model: nn.Module, module_map: Dict[str, Type[nn.Module]]
