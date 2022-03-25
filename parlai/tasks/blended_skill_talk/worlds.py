@@ -195,8 +195,8 @@ class SelfChatWorld(SelfChatBaseWorld):
         )
         parser.add_argument(
             '--attention-path',
-            type='str',
-            default="/scratch/lustre/home/illa7843/cn_extraction/self_chat/",
+            type=str,
+            default="/scratch/lustre/home/illa7843/cn_extraction/self_chat",
             help='Path where attentions should be saved',
         )
         return parser
@@ -242,6 +242,7 @@ class SelfChatWorld(SelfChatBaseWorld):
                 )
                 self.acts[i] = context
                 self.agents[i].observe(validate(context))
+                
             # clear contexts so they are only added once per episode
             self.contexts = None
         elif self.seed_utterances:
@@ -264,41 +265,34 @@ class SelfChatWorld(SelfChatBaseWorld):
             acts = self.acts
             agents = self.agents
 
-            acts[0] = agents[0].act()            
+            acts[0] = agents[0].act()
+            response = acts[0]
             if self.opt.get('include_concepts', False):
-                acts[0] = self._add_knowledge_to_act(acts[0])
-            input_text = acts[0].get('text', '[no text field]')
+                acts[0] = self._add_knowledge_to_act(acts[0])            
             agents[1].observe(validate(acts[0]))
+            
+            self.save_attentions(agents[0],response)
 
-            acts[1] = agents[1].act()
-            response_text = acts[1].get('text', 'No response')
+            acts[1] = agents[1].act()            
             if self.opt.get('include_concepts', False):
                 acts[1] = self._add_knowledge_to_act(acts[1])
             agents[0].observe(validate(acts[1]))
 
-            self.save_attentions(input_text,response_text)
-
+        
+        
+        self.agents[0].clear_hooks()
 
         self.update_counters()
         self.turn_cnt += 1
 
-    def save_attentions(self, input_text,response_text):
-        model_agent = self.get_model_agent()
-        input_tokens = model_agent.dict.tokenize(input_text)
-        output_tokens = model_agent.dict.tokenize(response_text)
-        
-        encoder = model_agent.model.encoder
-        decoder = model_agent.model.decoder
-
-        encoder_attention = [l.attention.attn_weights.unsqueeze(0) for l in encoder.layers]
-        decoder_attention = [l.self_attention.attn_weights.unsqueeze(0) for l in decoder.layers]
-        cross_attention = [l.encoder_attention.attn_weights.unsqueeze(0) for l in decoder.layers]
-        # pad tokens
-        decoder_size = decoder_attention[0].size()[-1]
-        encoder_size = encoder_attention[0].size()[-1]
-        output_tokens = ['__start__'] + output_tokens + ['__end__']
-        output_tokens += ['__null__'] * (decoder_size - len(output_tokens))
-        input_tokens += ['__null__'] * (encoder_size - len(input_tokens))
+    def save_attentions(self, model_agent,response):        
+        enc_attn, dec_attn, cross_attn = model_agent.extract_attentions()
+        enc_in = model_agent.extract_input_tokens()        
+        input_tokens = enc_in
+        output_tokens = [t[0] for t in response['text_token_info']]
+        encoder_attention = enc_attn
+        decoder_attention = dec_attn
+        cross_attention = cross_attn
         result = {
             "input_tokens": input_tokens,
             "output_tokens":output_tokens,
@@ -308,4 +302,5 @@ class SelfChatWorld(SelfChatBaseWorld):
         }
         path = Path(self.opt.get('attention_path'),'./') / f'attentions_{self.total_parleys}.pickle'
         with open(path, 'wb') as handle:
-            pickle.dump(result, handle, protocol=pickle.HIGHEST_PROTOCOL)        
+            pickle.dump(result, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"Saved attentions to {path}!")    

@@ -1319,9 +1319,8 @@ class ConceptsTeacher(BasicdialogTeacher):
         dialog_entry_2 = d['dialog'][idx + 1]
 
         text = dialog_entry_1['text']
-        concepts = dialog_entry_1.get('concepts',[])
-        concepts = '. '.join(concepts)
-        text += f'\n{TOKEN_KNOWLEDGE}{concepts}{TOKEN_END_KNOWLEDGE}'
+        concepts = dialog_entry_1.get('concepts','')
+        text += f'{concepts}'
         labels = [dialog_entry_2['text']]
 
         assert isinstance(self.add_topic, bool)

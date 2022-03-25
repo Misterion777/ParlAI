@@ -56,6 +56,7 @@ class OutputRecorder:
         self.inputs = []
         self.outputs = []
 
+hooks_created = False
 class AttentionOutTransformerAgentMixin():
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -72,18 +73,22 @@ class AttentionOutTransformerAgentMixin():
             'layers': TransformerDecoder,
             'attentions': MultiHeadAttention,
         }
-        self.hooks = {                        
-            'encoder': self._register_series_of_hooks(
-                model=self.model.encoder, module_map=encoder_module_map
-            ),
-            'decoder': self._register_series_of_hooks(
-                model=self.model.decoder, module_map=decoder_module_map
-            ),      
-            'embeddings':OutputRecorder(self)
-        }
-        self.model.embeddings.register_forward_hook(
-            self.hooks['embeddings']
-        )
+        global hooks_created
+        if not hooks_created:
+            self.hooks = {                        
+                'encoder': self._register_series_of_hooks(
+                    model=self.model.encoder, module_map=encoder_module_map
+                ),
+                'decoder': self._register_series_of_hooks(
+                    model=self.model.decoder, module_map=decoder_module_map
+                ),      
+                'embeddings':OutputRecorder(self)
+            }
+            hooks_created = True
+        else:            
+            self.hooks = None
+            print('Can be hooked only once!')  
+
 
     def _register_series_of_hooks(
         self, model: nn.Module, module_map: Dict[str, Type[nn.Module]]
@@ -94,24 +99,15 @@ class AttentionOutTransformerAgentMixin():
         `module_map` is a dict whose keys are module-type names and whose values are
         module types. For each module type, during each forward pass of `model`, all
         outputs of modules of that type will be saved to `hooks[module_type].outputs`.
-        """
-        hooks = {}
+        """        
+        hooks = {}    
         for module_name, module_type in module_map.items():
             hooks[module_name] = OutputRecorder(self)
             for module in model.modules():
-                if isinstance(module, module_type):
-                    module.register_forward_hook(hooks[module_name])
+                if isinstance(module, module_type):                                        
+                    module.register_forward_hook(hooks[module_name])                        
+                            
         return hooks
-
-    def extract_embedding_outputs(self) -> Dict[str, torch.Tensor]:
-        """
-        Extract out the encoder and decoder embedding outputs.
-        """
-        assert len(self.hooks['embeddings'].outputs) == 2
-        return {
-            'encoder': self.hooks['embeddings'].outputs[0],
-            'decoder': self.hooks['embeddings'].outputs[1],
-        }
 
     def extract_attentions(self):
         dec_outputs = self.hooks['decoder']['layers'].outputs
@@ -122,12 +118,15 @@ class AttentionOutTransformerAgentMixin():
         cross_attn = []
 
         i = 0
+        print('total dec runs: ',len(dec_outputs))
         while i < len(dec_outputs):
             dec_attn = torch.cat([layer['self_attn'].unsqueeze(0) for layer in dec_outputs[i]])
             cr_attn = torch.cat([layer['encoder_attn'].unsqueeze(0) for layer in dec_outputs[i]])
             dec_tmp_attn = []
             cr_tmp_attn = []
             while dec_attn.size()[2] == 1: # skip layer, head
+                print('dec_attn size: ',dec_attn.size())
+                print('cr_attn size: ',cr_attn.size())
                 dec_tmp_attn.append(dec_attn)
                 cr_tmp_attn.append(cr_attn)
                 i += 1
@@ -135,13 +134,16 @@ class AttentionOutTransformerAgentMixin():
                     break
                 dec_attn = torch.cat([layer['self_attn'].unsqueeze(0) for layer in dec_outputs[i]])        
                 cr_attn = torch.cat([layer['encoder_attn'].unsqueeze(0) for layer in dec_outputs[i]])        
+                if dec_attn.size()[3] == 1:
+                    i -= 1
+                    break
             
             if len(dec_tmp_attn) == 0:
                 decoder_attn.append(dec_attn)
                 cross_attn.append(cr_attn)
             else:
                 max_dim = dec_tmp_attn[-1].size(-1)
-                assert len(dec_tmp_attn) == max_dim # insure square mat
+                assert len(dec_tmp_attn) == max_dim, f"{len(dec_tmp_attn)}!={max_dim}" # insure square mat
                 dec_tmp_attn = cat_pad(dec_tmp_attn,max_dim)
                 cr_tmp_attn = torch.cat(cr_tmp_attn,dim=2)
                 
@@ -150,24 +152,22 @@ class AttentionOutTransformerAgentMixin():
 
             i +=1
         
-        encoder_attn = [[layer['self_attn'].unsqueeze(0) for layer in run] for run in enc_outputs]  
-        decoder_attn = [[layer.unsqueeze(0) for layer in run] for run in decoder_attn] 
-        cross_attn = [[layer.unsqueeze(0) for layer in run] for run in cross_attn] 
+        encoder_attn = [[layer['self_attn'].unsqueeze(0).cpu() for layer in run] for run in enc_outputs]  
+        decoder_attn = [[layer.unsqueeze(0).cpu() for layer in run] for run in decoder_attn] 
+        cross_attn = [[layer.unsqueeze(0).cpu() for layer in run] for run in cross_attn] 
 
         return encoder_attn,decoder_attn,cross_attn
 
-    def extract_tokens(self):
-        enc_in = []
-        dec_in = []        
+    def extract_input_tokens(self):
+        enc_inputs = self.hooks['encoder']['layers'].inputs        
 
-        for run_tokens in self.hooks['encoder']['layers'].inputs:
+        enc_in = []             
+        print('encoder inputs len:',len(enc_inputs))
+        for run_tokens in enc_inputs:
+            print('Size of tokens: ',run_tokens.size())
             run_tokens = run_tokens.squeeze(0)
-            enc_in.append([self.dict.ind2tok[ind.item()] for ind in run_tokens])
-        for run_tokens in self.hooks['decoder']['layers'].inputs:
-            run_tokens = run_tokens.squeeze(0)
-            dec_in.append([self.dict.ind2tok[ind.item()] for ind in run_tokens])
-                
-        return enc_in,dec_in
+            enc_in.append([self.dict.ind2tok[ind.item()] for ind in run_tokens])                
+        return enc_in
                 
 
     def extract_encoder_attention(self):
