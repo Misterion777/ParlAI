@@ -180,15 +180,21 @@ class DefaultTeacher(EmpatheticDialoguesTeacher):
 TOKEN_KNOWLEDGE = '__knowledge__'
 TOKEN_END_KNOWLEDGE = '__endknowledge__'
 class ConceptsTeacher(EmpatheticDialoguesTeacher):
-    def __init__(self, opt, shared=None):
-        split = opt['datatype'].split(':')
-        base_datatype = split[0] + '_concepts'
-        opt['datatype'] = ':'.join([base_datatype] + split[1:])
-        super().__init__(opt, shared)
-        
+    def _get_base_datatype(self, opt) -> str:
+        return opt['datatype'].split(':')[0] + '_concepts'
+
+    def _get_experiencer_side_only(self, opt):
+        """
+        Determine which side(s) of the conversation to use.
+        """
+        base_datatype = self._get_base_datatype(opt)
+        return (
+            opt.get('train_experiencer_only', DEFAULT_TRAIN_EXPERIENCER_ONLY)
+            and base_datatype == 'train_concepts'
+        ) or base_datatype != 'train_concepts'
 
     def setup_data(self, path):
-        logging.debug('loading: ' + path)
+        logging.info('loading: ' + path)
         with PathManager.open(path) as f:
             df = f.readlines()
 
