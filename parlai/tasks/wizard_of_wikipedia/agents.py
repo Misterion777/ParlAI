@@ -23,6 +23,7 @@ from parlai.core.params import ParlaiParser
 from parlai.core.opt import Opt
 import copy
 from parlai.core.teachers import FixedDialogTeacher, MultiTaskTeacher
+from parlai.utils.concepts import split_concepts
 from parlai.utils.io import PathManager
 from parlai.utils import logging
 from parlai.utils.misc import warn_once
@@ -1320,6 +1321,9 @@ class ConceptsTeacher(BasicdialogTeacher):
 
         text = dialog_entry_1['text']
         concepts = dialog_entry_1.get('concepts','')
+        if self.opt.get("dict_tokenizer", "") == "re":
+            logging.debug("Found re tokenizer, changing input data")                                                        
+            concepts = split_concepts(concepts)            
         text += f'{concepts}'
         labels = [dialog_entry_2['text']]
 

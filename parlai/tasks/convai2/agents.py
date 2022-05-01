@@ -13,6 +13,7 @@ import parlai.utils.logging as logging
 from parlai.core.params import ParlaiParser
 from typing import Optional
 from parlai.core.opt import Opt
+from parlai.utils.concepts import split_concepts
 
 import copy
 import os
@@ -223,6 +224,8 @@ class SampleTeacher(YamlTeacher):
         )
         super().__init__(opt, shared)
 
+TOKEN_KNOWLEDGE = '__knowledge__'
+TOKEN_END_KNOWLEDGE = '__endknowledge__'
 class ConceptsTeacher(FbDeprecatedDialogTeacher):
     def __init__(self, opt, shared=None):
         opt = copy.deepcopy(opt)
@@ -233,6 +236,33 @@ class ConceptsTeacher(FbDeprecatedDialogTeacher):
             use_cands = True
         opt['datafile'] = _path(opt, 'self_original_concepts', use_cands)
         super().__init__(opt, shared)
+    
+    def setup_data(self, path):
+        logging.info(f"loading normalized fbdialog data: {path}")
+        exs_counter = 0
+        for data, new_episode in super().setup_data(path):
+            text, labels, reward = data[:3]
+            candidates = None if len(data) == 3 else data[3]
+            if new_episode:
+                exs_counter = 0
+            if self.max_num_turns > 0 and exs_counter >= self.max_num_turns:
+                continue
+            text = self.normalize_replies(text)
+            if self.opt.get("dict_tokenizer", "") == "re":
+                logging.debug("Found re tokenizer, changing input data")                
+                idx = text.find(TOKEN_KNOWLEDGE)
+                if idx != -1:                
+                    concepts = text[idx:]                    
+                    concepts = split_concepts(concepts)                    
+                    text = text[:idx] + concepts
+            
+            labels = [self.normalize_replies(l) for l in labels]
+            exs_counter += 1
+            if candidates:
+                candidates = [self.normalize_replies(c) for c in candidates]
+                yield (text, labels, reward, candidates), new_episode
+            else:
+                yield (text, labels, reward), new_episode
 
 class NormalizedConceptsTeacher(NormalizedTeacherTrait, ConceptsTeacher):
     pass

@@ -26,6 +26,7 @@ from parlai.tasks.empathetic_dialogues.agents import EmpatheticDialoguesTeacher
 from parlai.tasks.wizard_of_wikipedia.agents import WizardDialogKnowledgeTeacher
 from parlai.utils.misc import warn_once
 from parlai.utils.io import PathManager
+from parlai.utils.concepts import split_concepts
 from .build import build
 
 
@@ -722,7 +723,11 @@ class ConceptsTeacher(BlendedSkillTalkTeacher):
                 if msg:
                     self.num_exs += 1
                     # concepts = .replace("|",". ")
-                    text = msg['text'] + f'{msg["concepts"]}'
+                    concepts = msg["concepts"]
+                    if self.opt.get("dict_tokenizer", "") == "re":
+                        concepts = split_concepts(concepts)                
+
+                    text = msg['text'] + concepts
                     msg.force_set('text',text)
                     del msg['concepts']
                     eps.append(msg)
