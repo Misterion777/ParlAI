@@ -23,6 +23,9 @@ from parlai.agents.transformer.modules import (
 from parlai.agents.transformer.transformer import TransformerGeneratorAgent
 from parlai.core.opt import Opt
 from parlai.core.loader import register_agent
+from parlai.core.torch_agent import History
+from parlai.utils.concepts import get_knowledge
+import logging
 
 
 def cat_pad(tensor_list,max_dim):
@@ -219,3 +222,108 @@ class AttentionOutTransformerAgentMixin():
 @register_agent("return_attn_transformer_agent")
 class AttentionOutTransformerAgent(AttentionOutTransformerAgentMixin, TransformerGeneratorAgent):
     pass
+
+
+class ConceptsHistory(History):
+    def get_history_vec(self,concepts=None):
+        """
+        Return a vectorized version of the history.
+        """
+        if len(self.history_vecs) == 0:
+            return None
+
+        # vec type is a list
+        history = []
+        for vec in self.history_vecs[:-1]:
+            history += [vec]
+            history += [self.delimiter_tok]
+        history += [self.history_vecs[-1]]
+        if self.temp_history is not None:
+            history.extend([self.parse(self.temp_history)])
+        if concepts is not None:
+            # print(f"Concepts: {concepts}")
+            history.extend([self.parse(concepts)])
+            # print(f"Tokens: {history[-1]}")
+        if self._global_end_token is not None:
+            history += [[self._global_end_token]]
+
+        history = sum(history, [])
+        if self.reversed:
+            history = list(reversed(history))
+
+        return history
+
+class ConceptsTransformerAgent(TransformerGeneratorAgent):
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('ConceptsTransformer arguments')
+        agent.add_argument(
+            '--extract-from-history',
+            type='bool',
+            default=True,
+            help="whether to extract concepts from whole history. If False will extract concepts only from latest message.",
+        )        
+        return agent
+
+    @classmethod
+    def history_class(cls):
+        """
+        Return the history class that this agent expects to use.
+
+        Can be overridden if a more complex history is required.
+        """
+        return ConceptsHistory
+
+    def _set_text_vec(self, obs, history, truncate):
+        """
+        Set the 'text_vec' field in the observation.
+
+        Useful to override to change vectorization behavior
+        """
+        if 'text' not in obs:
+            return obs
+
+        if 'text_vec' not in obs:
+            # text vec is not precomputed, so we set it using the history
+            history_string = history.get_history_str()
+            # when text not exist, we get text_vec from history string
+            # history could be none if it is an image task and 'text'
+            # filed is be empty. We don't want this
+            if history_string is None:
+                return obs
+            obs['full_text'] = history_string
+            knowledge = None
+            if self.opt.get("extract_runtime"):
+                if self.opt.get("extract_from_history"):
+                    extract_from = history_string.replace("your persona:","")
+                else:
+                    extract_from = obs["text"]
+
+                knowledge = get_knowledge(extract_from,limit=2,compare_all_text=True)
+                # print("Extracted concepts:")
+                # print(knowledge)
+                # obs.force_set("knowledge",knowledge)
+                obs.force_set("text",obs["text"] + knowledge)
+
+            if history_string:
+                obs['text_vec'] = history.get_history_vec(knowledge)
+                obs['full_text_vec'] = history.get_history_vec(knowledge)
+
+        # check truncation
+        if obs.get('text_vec') is not None:
+            truncate_left = not self.history_reversed
+            text_length = len(obs['text_vec'])
+            truncated_vec = self._check_truncate(
+                obs['text_vec'], truncate, truncate_left
+            )
+            obs.force_set('context_original_length', text_length)
+            obs.force_set('context_truncate_rate', text_length != len(truncated_vec))
+            obs.force_set(
+                'context_truncated_length', max(text_length - len(truncated_vec), 0)
+            )
+            obs.force_set('text_vec', torch.LongTensor(truncated_vec))
+
+        return obs
